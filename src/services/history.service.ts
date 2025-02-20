@@ -138,10 +138,10 @@ function processTokenTransaction(
           signature: tx.transaction.signatures[0],
           from: tx.transaction.message.accountKeys[0].toString(),
           to: tx.transaction.message.accountKeys[1].toString(),
-          amount: `${
-            tokenTransfer.uiTokenAmount.uiAmount
-          } ${tokenType.toUpperCase()}`,
+          amount: `${tokenTransfer.uiTokenAmount.uiAmount}`,
           timestamp: new Date((tx.blockTime || 0) * 1000).toLocaleString(),
+          tokenMint: tokenMint,
+          tokenType: tokenType,
         };
       } catch (error: any) {
         console.warn(`Skipping malformed transaction: ${error.message}`);
@@ -173,14 +173,6 @@ async function getSolTransactions(
       fetchTransaction(connection, sig.signature, transactionConfig)
     )
   );
-
-  // Log SOL transactions
-  transactions.forEach((tx) => {
-    const processed = processSolTransaction(tx);
-    if (processed) {
-      console.log(processed);
-    }
-  });
 
   return {
     transactions,
@@ -233,14 +225,6 @@ async function getTokenTransactions(
     );
     allTransactions.push(...transactions);
   }
-
-  // Log token transactions
-  allTransactions.forEach((tx) => {
-    const processed = processTokenTransaction(tx, tokenMint, tokenType);
-    if (processed) {
-      console.log(processed);
-    }
-  });
 
   return {
     transactions: allTransactions,
