@@ -10,6 +10,7 @@ import {
   AnyTransactionResponse,
   GetTransactionsResponse,
   PaginationOptions,
+  RPCEndpoint,
 } from "../interfaces/types";
 
 /** Default token configurations; null represents native SOL */
@@ -22,11 +23,54 @@ const defaultTokenConfigs: Record<string, string | null> = {
 /** Supported Solana networks */
 export type SolanaNetwork = "mainnet-beta" | "devnet" | "testnet";
 
+/** RPC configuration for different networks */
+const DEFAULT_RPC_CONFIGS: Record<SolanaNetwork, RPCEndpoint[]> = {
+  "mainnet-beta": [{ url: clusterApiUrl("mainnet-beta"), weight: 1 }],
+  devnet: [{ url: clusterApiUrl("devnet"), weight: 1 }],
+  testnet: [{ url: clusterApiUrl("testnet"), weight: 1 }],
+};
+
+/** Connection pool to manage multiple connections */
+class ConnectionPool {
+  private connections: Map<string, Connection> = new Map();
+  private currentIndex: Record<SolanaNetwork, number> = {
+    "mainnet-beta": 0,
+    devnet: 0,
+    testnet: 0,
+  };
+  private rpcConfigs: Record<SolanaNetwork, RPCEndpoint[]>;
+
+  constructor(
+    rpcConfigs: Record<SolanaNetwork, RPCEndpoint[]> = DEFAULT_RPC_CONFIGS
+  ) {
+    this.rpcConfigs = rpcConfigs;
+  }
+
+  getConnection(network: SolanaNetwork): Connection {
+    const endpoints = this.rpcConfigs[network];
+    const currentIdx = this.currentIndex[network];
+
+    // Rotate to next endpoint
+    this.currentIndex[network] = (currentIdx + 1) % endpoints.length;
+
+    const endpoint = endpoints[currentIdx];
+    const key = `${network}-${endpoint.url}`;
+
+    if (!this.connections.has(key)) {
+      this.connections.set(key, new Connection(endpoint.url));
+    }
+
+    return this.connections.get(key)!;
+  }
+}
+
+const connectionPool = new ConnectionPool();
+
 /**
  * Returns a connection to the specified Solana network.
  */
 function getConnection(network: SolanaNetwork): Connection {
-  return new Connection(clusterApiUrl(network));
+  return connectionPool.getConnection(network);
 }
 
 /**
@@ -247,6 +291,7 @@ async function getTokenTransactions(
  * @param network - The Solana network to connect to.
  * @param options - Pagination options (limit and before signature).
  * @param tokenMapping - Custom token mapping configuration.
+ * @param rpcConfigs - Custom RPC configuration for different networks.
  * @returns A promise that resolves with transactions and pagination info.
  */
 export async function getTransactions(
@@ -254,9 +299,11 @@ export async function getTransactions(
   tokenType: string,
   network: SolanaNetwork = "mainnet-beta",
   options: PaginationOptions = { limit: 20, before: null },
-  tokenMapping: Record<string, string | null> = defaultTokenConfigs
+  tokenMapping: Record<string, string | null> = defaultTokenConfigs,
+  rpcConfigs: Record<SolanaNetwork, RPCEndpoint[]> = DEFAULT_RPC_CONFIGS
 ): Promise<GetTransactionsResponse> {
-  const connection = getConnection(network);
+  const pool = new ConnectionPool(rpcConfigs);
+  const connection = pool.getConnection(network);
   const pubKey = new PublicKey(address);
   const transactionConfig = { maxSupportedTransactionVersion: 0 };
 

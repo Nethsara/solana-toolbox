@@ -24,3 +24,9 @@ export interface GetTransactionsResponse {
   transactions: AnyTransactionResponse[];
   pagination: TransactionPagination;
 }
+
+/** RPC endpoint configuration */
+export interface RPCEndpoint {
+  url: string;
+  weight: number; // Higher weight = higher priority
+}
