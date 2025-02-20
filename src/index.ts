@@ -7,4 +7,5 @@ export {
   type GetTransactionsResponse,
   type PaginationOptions,
   type AnyTransactionResponse,
+  type RPCEndpoint,
 } from "./interfaces/types";

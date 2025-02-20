@@ -74,6 +74,32 @@ function getConnection(network: SolanaNetwork): Connection {
 }
 
 /**
+ * Implements exponential backoff retry logic for async functions
+ * @param fn - The async function to retry
+ * @param maxRetries - Maximum number of retry attempts
+ * @param baseDelay - Base delay in milliseconds
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries: number = 3,
+  baseDelay: number = 500
+): Promise<T> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error: any) {
+      if (error?.message?.includes("429") && attempt < maxRetries) {
+        const delay = baseDelay * Math.pow(2, attempt);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error("Max retries exceeded");
+}
+
+/**
  * Fetches signatures for a given public key with pagination.
  *
  * @param connection - The Solana connection instance.
@@ -86,10 +112,12 @@ async function fetchSignatures(
   key: PublicKey,
   options: PaginationOptions
 ): Promise<ConfirmedSignatureInfo[]> {
-  return connection.getSignaturesForAddress(key, {
-    limit: options.limit,
-    before: options.before ?? undefined,
-  });
+  return withRetry(() =>
+    connection.getSignaturesForAddress(key, {
+      limit: options.limit,
+      before: options.before ?? undefined,
+    })
+  );
 }
 
 /**
@@ -105,7 +133,9 @@ async function fetchTransaction(
   signature: string,
   transactionConfig: { maxSupportedTransactionVersion: number }
 ): Promise<AnyTransactionResponse> {
-  return connection.getTransaction(signature, transactionConfig);
+  return withRetry(() =>
+    connection.getTransaction(signature, transactionConfig)
+  );
 }
 
 /**
@@ -327,6 +357,71 @@ export async function getTransactions(
   }
 }
 
+/**
+ * Retrieves all token accounts and their balances for a given wallet address.
+ *
+ * @param address - The wallet address as a string.
+ * @param network - The Solana network to connect to.
+ * @param tokenMapping - Custom token mapping configuration.
+ * @param rpcConfigs - Custom RPC configuration for different networks.
+ * @returns A promise that resolves with an array of token balances.
+ */
+async function getAllTokens(
+  address: string,
+  network: SolanaNetwork = "mainnet-beta",
+  tokenMapping: Record<string, string | null> = defaultTokenConfigs,
+  rpcConfigs: Record<SolanaNetwork, RPCEndpoint[]> = DEFAULT_RPC_CONFIGS
+) {
+  const pool = new ConnectionPool(rpcConfigs);
+  const connection = pool.getConnection(network);
+  const pubKey = new PublicKey(address);
+
+  // Get SOL balance
+  const solBalance = await connection.getBalance(pubKey);
+  const tokens = [
+    {
+      tokenType: "sol",
+      symbol: "SOL",
+      balance: solBalance / LAMPORTS_PER_SOL,
+      decimals: 9,
+      mint: null,
+    },
+  ];
+
+  // Get all token accounts
+  const tokenAccounts = await connection.getParsedTokenAccountsByOwner(pubKey, {
+    programId: TOKEN_PROGRAM_ID,
+  });
+
+  // Create reverse mapping from mint address to token type
+  const mintToToken = Object.entries(tokenMapping).reduce(
+    (acc, [type, mint]) => {
+      if (mint) acc[mint] = type;
+      return acc;
+    },
+    {} as Record<string, string>
+  );
+
+  // Process each token account
+  for (const { account } of tokenAccounts.value) {
+    const parsedInfo = account.data.parsed.info;
+    const mint = parsedInfo.mint;
+    const tokenType = mintToToken[mint] || "unknown";
+
+    if (parsedInfo.tokenAmount.uiAmount > 0) {
+      tokens.push({
+        tokenType,
+        symbol: tokenType.toUpperCase(),
+        balance: parsedInfo.tokenAmount.uiAmount,
+        decimals: parsedInfo.tokenAmount.decimals,
+        mint,
+      });
+    }
+  }
+
+  return tokens;
+}
+
 // Make these functions exportable if needed for testing or advanced usage
 export {
   getConnection,
@@ -336,4 +431,5 @@ export {
   processTokenTransaction,
   getSolTransactions,
   getTokenTransactions,
+  getAllTokens,
 };
