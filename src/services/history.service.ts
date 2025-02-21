@@ -422,6 +422,68 @@ async function getAllTokens(
   return tokens;
 }
 
+/**
+ * Retrieves transactions for all tokens in a wallet.
+ *
+ * @param address - The wallet address as a string.
+ * @param network - The Solana network to connect to.
+ * @param options - Pagination options (limit and before signature).
+ * @param tokenMapping - Custom token mapping configuration.
+ * @param rpcConfigs - Custom RPC configuration for different networks.
+ * @returns A promise that resolves with transactions for all tokens.
+ */
+async function getAllTokenTransactions(
+  address: string,
+  network: SolanaNetwork = "mainnet-beta",
+  options: PaginationOptions = { limit: 20, before: null },
+  tokenMapping: Record<string, string | null> = defaultTokenConfigs,
+  rpcConfigs: Record<SolanaNetwork, RPCEndpoint[]> = DEFAULT_RPC_CONFIGS
+) {
+  // Get all tokens in the wallet
+  const tokens = await getAllTokens(address, network, tokenMapping, rpcConfigs);
+
+  // Fetch transactions for each token type
+  const transactionPromises = tokens.map((token) =>
+    getTransactions(
+      address,
+      token.tokenType,
+      network,
+      options,
+      tokenMapping,
+      rpcConfigs
+    ).catch((error) => {
+      console.warn(
+        `Failed to fetch transactions for ${token.tokenType}:`,
+        error
+      );
+      return { transactions: [], pagination: { before: null, hasMore: false } };
+    })
+  );
+
+  const results = await Promise.all(transactionPromises);
+
+  // Combine all transactions
+  const allTransactions = results.flatMap((result) => result.transactions);
+
+  // Sort transactions by timestamp (newest first)
+  const sortedTransactions = allTransactions.sort((a, b) => {
+    if (!a || !b) return 0;
+    return (b.blockTime || 0) - (a.blockTime || 0);
+  });
+
+  return {
+    transactions: sortedTransactions.slice(0, options.limit),
+    pagination: {
+      before:
+        sortedTransactions.length > options.limit
+          ? sortedTransactions[options.limit - 1]?.transaction?.signatures[0] ||
+            null
+          : null,
+      hasMore: sortedTransactions.length > options.limit,
+    },
+  };
+}
+
 // Make these functions exportable if needed for testing or advanced usage
 export {
   getConnection,
@@ -431,5 +493,5 @@ export {
   processTokenTransaction,
   getSolTransactions,
   getTokenTransactions,
-  getAllTokens,
+  getAllTokenTransactions,
 };

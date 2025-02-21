@@ -1,5 +1,6 @@
 export {
   getTransactions,
+  getAllTokenTransactions,
   type SolanaNetwork,
 } from "./services/history.service";
 
